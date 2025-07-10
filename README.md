@@ -1,9 +1,8 @@
 # Audio self-labeling using optimal transport
 
-example configuration can be found in `settings.yaml`
+[Browse and listen to](https://mnuhurr.github.io/audio-self-labeling/) some selected example classes.
 
-DDP support is included in the code, but it is outdated.
-
+An example configuration can be found in `settings.yaml`. DDP support is included in the code, but it is outdated.
 
 steps to run:
 1. edit `settings.yaml`
