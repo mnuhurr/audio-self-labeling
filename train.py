@@ -9,7 +9,7 @@ from common import read_yaml, init_log
 from dataset import HDF5MelDataset, collate
 from models.resnet import MultiheadResnet18
 from models.utils import model_size
-from trainer import Trainer, DDPTrainer
+from trainer import Trainer
 
 
 def parse_args():
