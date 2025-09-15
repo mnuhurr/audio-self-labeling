@@ -26,7 +26,7 @@ def spectrogram_mixing(x: torch.Tensor, max_amount: float = 0.3) -> torch.Tensor
 
 class Trainer:
     def __init__(self,
-                 gpu_id: int,
+                 device: torch.device,
                  model: torch.nn.Module,
                  loader: torch.utils.data.DataLoader,
                  n_classes: list[int],
@@ -46,8 +46,8 @@ class Trainer:
                  log_dir: str | Path | None = None,
                  use_stored_sk_vector: bool = False,
                  save_every: int = 10):
-        self.gpu_id = gpu_id
-        self.model = model.to(self.gpu_id)
+        self.device = device
+        self.model = model.to(self.device)
         self.loader = loader
         self.optimizer = optimizer
         self.scheduler = scheduler
@@ -57,9 +57,9 @@ class Trainer:
         self.kl_beta = 0.1
 
         self.n_classes = n_classes
-        self.accuracy = [torchmetrics.Accuracy('multiclass', num_classes=nc).to(self.gpu_id) for nc in n_classes]
+        self.accuracy = [torchmetrics.Accuracy('multiclass', num_classes=nc).to(self.device) for nc in n_classes]
 
-        self.scaler = torch.cuda.amp.GradScaler()
+        self.scaler = torch.amp.GradScaler(device=self.device)
 
         self.epoch = epoch if epoch is not None else 0
         self.save_every = save_every
@@ -133,8 +133,8 @@ class Trainer:
         batch_t0 = time.time()
 
         for batch, (x, y_true, _) in enumerate(self.loader):
-            x = x.to(self.gpu_id)
-            y_true = y_true.to(self.gpu_id)
+            x = x.to(self.device)
+            y_true = y_true.to(self.device)
 
             if self.mixup_alpha is not None:
                 #x, y_true = batch_mixup(x, y_true, n_classes=self.n_classes[0], mixup_alpha=self.mixup_alpha)
@@ -175,8 +175,8 @@ class Trainer:
                 losses[f'head_{hn}'] = loss[hn].item()
                 accuracies[f'head_{hn}'] = accuracy[hn].item()
 
-            self.writer.add_scalars('epoch/loss', losses, self.epoch)
-            self.writer.add_scalars('epoch/accuracy', accuracies, self.epoch)
+            self.writer.add_scalars('epoch/loss', losses, self.epoch + 1)
+            self.writer.add_scalars('epoch/accuracy', accuracies, self.epoch + 1)
             self.writer.flush()
 
         epoch_loss = loss.mean().item()
@@ -190,10 +190,10 @@ class Trainer:
     @torch.inference_mode()
     def _clip_embeddings(self) -> torch.Tensor:
         n = len(self.loader.dataset)
-        embeddings = torch.empty(n, self.d_embedding, device=self.gpu_id)
+        embeddings = torch.empty(n, self.d_embedding, device=self.device)
 
         for x, _, idx in tqdm(self.loader):
-            x = x.to(self.gpu_id)
+            x = x.to(self.device)
             embeddings[idx] = self.model.clip_embedding(x)
 
         return embeddings
@@ -218,14 +218,14 @@ class Trainer:
 
         # 2. iteration
         times = torch.zeros(n_heads)
-        dev = torch.device('cuda', self.gpu_id)
         scalars = {}
+        counts = {}
         nmi = {}
         n_rnds = []
         for hn in tqdm(range(n_heads)):
             #print(f'head {hn + 1}: calculating projections... ', end='', flush=True)
             torch.cuda.empty_cache()
-            predicted = torch.zeros(n, self.n_classes[hn], dtype=torch.float64, device=dev)
+            predicted = torch.zeros(n, self.n_classes[hn], dtype=torch.float64, device=self.device)
             for x, idx in emb_loader:
                 predicted[idx] = F.softmax(self.model.head[hn](x).to(torch.float64) / temperature, dim=-1)
 
@@ -240,7 +240,7 @@ class Trainer:
                     previous_r=self.sk_r[hn],
                     previous_c=self.sk_c[hn],
                     tol=self.sk_tol,
-                    device=dev)
+                    device=self.device)
             else:
                 pr, r, c, cnt = sk.optimize_single(
                     predicted,
@@ -248,7 +248,7 @@ class Trainer:
                     previous_r=self.sk_r[hn],
                     previous_c=self.sk_c[hn],
                     tol=self.sk_tol,
-                    device=dev)
+                    device=self.device)
                 n_rnds.append(cnt)
 
             del predicted
@@ -256,6 +256,7 @@ class Trainer:
             #print(f'done in {dt:.1f} s')
             times[hn] = dt
             scalars[f'head_{hn}'] = dt
+            counts[f'head_{hn}'] = cnt
 
             if self.store_sk:
                 self.sk_r[hn] = r.cpu()
@@ -273,9 +274,10 @@ class Trainer:
                 nmi[f'head_{hn}'] = cls_tag_mi(cls_mat, self.gt)
 
         if self.writer is not None:
-            self.writer.add_scalars('optimize/times', scalars, self.epoch)
+            self.writer.add_scalars('optimize/times', scalars, self.epoch + 1)
+            self.writer.add_scalars('optimize/iterations', counts, self.epoch + 1)
             if len(nmi) > 0:
-                self.writer.add_scalars('optimize/nmi', nmi, self.epoch)
+                self.writer.add_scalars('optimize/nmi', nmi, self.epoch + 1)
 
             self.writer.flush()
 
