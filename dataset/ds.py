@@ -2,7 +2,6 @@
 from pathlib import Path
 import torch
 import torch.nn.functional as F
-import torchaudio
 import h5py
 
 
@@ -94,7 +93,11 @@ class HDF5MelDataset(torch.utils.data.Dataset):
             x = F.pad(x, (0, self.output_length - x.size(-1)))
 
         elif x.size(-1) > self.output_length:
-            offset = torch.randint(x.size(-1) - self.output_length, size=())
+            # limit the max offset by how much there is empty frames in the end of the data
+            nonzeros = torch.any(x != 0.0, dim=0).int().sum().item()
+
+            max_offset = min(nonzeros, x.size(-1) - self.output_length)
+            offset = torch.randint(max_offset, size=())
             x = x[:, offset:offset + self.output_length]
 
         return x

@@ -98,7 +98,7 @@ class Trainer:
     def _train_batch(self, x: torch.Tensor, y_true: torch.Tensor) -> tuple[torch.Tensor, float]:
         self.optimizer.zero_grad()
 
-        with torch.cuda.amp.autocast():
+        with torch.amp.autocast(device_type=self.device.type):
             y_pred = self.model(x)
             losses = torch.stack([self.criterion(yp, y_true[:, k]) for k, yp in enumerate(y_pred)])
             loss = losses.mean()
